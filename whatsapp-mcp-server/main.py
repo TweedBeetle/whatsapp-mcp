@@ -1,4 +1,10 @@
 from typing import List, Dict, Any, Optional
+import subprocess
+import socket
+import os
+import sys
+import atexit
+import time
 from mcp.server.fastmcp import FastMCP
 from whatsapp import (
     search_contacts as whatsapp_search_contacts,
@@ -14,6 +20,74 @@ from whatsapp import (
     send_audio_message as whatsapp_audio_voice_message,
     download_media as whatsapp_download_media
 )
+
+# Track bridge process for cleanup
+_bridge_process = None
+
+def is_port_in_use(port: int) -> bool:
+    """Check if a port is already in use."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("127.0.0.1", port))
+            return False
+        except OSError:
+            return True
+
+def start_bridge():
+    """Start the WhatsApp bridge if not already running."""
+    global _bridge_process
+
+    # Check if bridge is already running
+    if is_port_in_use(8080):
+        print("WhatsApp bridge already running on port 8080", file=sys.stderr)
+        return
+
+    # Find the bridge binary
+    bridge_dir = os.path.join(os.path.dirname(__file__), "..", "whatsapp-bridge")
+    bridge_binary = os.path.join(bridge_dir, "main")
+
+    if not os.path.exists(bridge_binary):
+        print(f"Warning: Bridge binary not found at {bridge_binary}", file=sys.stderr)
+        print("Please build the bridge: cd whatsapp-bridge && go build", file=sys.stderr)
+        return
+
+    # Start the bridge
+    try:
+        _bridge_process = subprocess.Popen(
+            [bridge_binary],
+            cwd=bridge_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True  # Detach from parent
+        )
+        print(f"Started WhatsApp bridge (PID: {_bridge_process.pid})", file=sys.stderr)
+
+        # Wait a moment for bridge to start
+        time.sleep(2)
+
+        # Verify it started
+        if not is_port_in_use(8080):
+            print("Warning: Bridge process started but port 8080 not in use", file=sys.stderr)
+
+    except Exception as e:
+        print(f"Failed to start bridge: {e}", file=sys.stderr)
+
+def cleanup_bridge():
+    """Clean up bridge process on exit."""
+    global _bridge_process
+    if _bridge_process:
+        try:
+            _bridge_process.terminate()
+            _bridge_process.wait(timeout=5)
+            print("Stopped WhatsApp bridge", file=sys.stderr)
+        except Exception as e:
+            print(f"Error stopping bridge: {e}", file=sys.stderr)
+
+# Register cleanup handler
+atexit.register(cleanup_bridge)
+
+# Start the bridge
+start_bridge()
 
 # Initialize FastMCP server
 mcp = FastMCP("whatsapp")

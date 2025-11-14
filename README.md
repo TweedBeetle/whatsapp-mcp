@@ -33,18 +33,20 @@ Here's an example of what you can do when it's connected to Claude.
    cd whatsapp-mcp
    ```
 
-2. **Run the WhatsApp bridge**
+2. **Build the WhatsApp bridge**
 
-   Navigate to the whatsapp-bridge directory and run the Go application:
+   Navigate to the whatsapp-bridge directory and build the Go binary:
 
    ```bash
    cd whatsapp-bridge
-   go run main.go
+   go build
    ```
 
-   The first time you run it, you will be prompted to scan a QR code. Scan the QR code with your WhatsApp mobile app to authenticate.
+   The first time the MCP connects, you will be prompted to scan a QR code. Scan the QR code with your WhatsApp mobile app to authenticate.
 
-   After approximately 20 days, you will might need to re-authenticate.
+   After approximately 20 days, you might need to re-authenticate.
+
+   **Note:** The MCP server automatically starts and manages the bridge - you don't need to run it manually!
 
 3. **Connect to the MCP server**
 
@@ -110,9 +112,9 @@ Without this setup, you'll likely run into errors like:
 
 This application consists of two main components:
 
-1. **Go WhatsApp Bridge** (`whatsapp-bridge/`): A Go application that connects to WhatsApp's web API, handles authentication via QR code, and stores message history in SQLite. It serves as the bridge between WhatsApp and the MCP server.
+1. **Go WhatsApp Bridge** (`whatsapp-bridge/`): A Go application that connects to WhatsApp's web API, handles authentication via QR code, and stores message history in SQLite. It serves as the bridge between WhatsApp and the MCP server. The bridge is automatically started and managed by the MCP server.
 
-2. **Python MCP Server** (`whatsapp-mcp-server/`): A Python server implementing the Model Context Protocol (MCP), which provides standardized tools for Claude to interact with WhatsApp data and send/receive messages.
+2. **Python MCP Server** (`whatsapp-mcp-server/`): A Python server implementing the Model Context Protocol (MCP), which provides standardized tools for Claude to interact with WhatsApp data and send/receive messages. On startup, it automatically checks if the bridge is running and starts it if needed.
 
 ### Data Storage
 
@@ -169,8 +171,12 @@ By default, just the metadata of the media is stored in the local database. The 
 
 ## Troubleshooting
 
-- If you encounter permission issues when running uv, you may need to add it to your PATH or use the full path to the executable.
-- Make sure both the Go application and the Python server are running for the integration to work properly.
+- **Permission issues with uv**: You may need to add it to your PATH or use the full path to the executable.
+- **Bridge not starting automatically**:
+  - Check that the binary exists at `whatsapp-bridge/main`
+  - Build it with: `cd whatsapp-bridge && go build`
+  - Check MCP server logs for any startup errors
+- **Port 8080 already in use**: The MCP automatically detects if the bridge is already running. If you have a stale process, kill it with: `lsof -ti:8080 | xargs kill`
 
 ### Authentication Issues
 
