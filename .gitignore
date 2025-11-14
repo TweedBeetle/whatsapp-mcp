@@ -2,6 +2,9 @@
 claude_desktop_config.json
 whatsapp.log
 
+# Bridge data
+whatsapp-bridge/store/
+
 # Compiled binaries
 whatsapp-bridge/main
 whatsapp-bridge/whatsapp-client

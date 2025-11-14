@@ -176,7 +176,7 @@ By default, just the metadata of the media is stored in the local database. The 
   - Check that the binary exists at `whatsapp-bridge/main`
   - Build it with: `cd whatsapp-bridge && go build`
   - Check MCP server logs for any startup errors
-- **Port 8080 already in use**: The MCP automatically detects if the bridge is already running. If you have a stale process, kill it with: `lsof -ti:8080 | xargs kill`
+- **Port conflicts**: The bridge automatically finds an available port starting from 8080. If 8080 is occupied (e.g., by qbittorrent or other services), it will use 8081, 8082, etc. The selected port is saved to `whatsapp-bridge/store/bridge.port` and automatically read by the MCP server. If you have a stale bridge process, kill it with: `lsof -ti:8080 | xargs kill` (adjusting the port number as needed)
 
 ### Authentication Issues
 

@@ -8,7 +8,19 @@ import json
 import audio
 
 MESSAGES_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'whatsapp-bridge', 'store', 'messages.db')
-WHATSAPP_API_BASE_URL = "http://localhost:8080/api"
+PORT_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'whatsapp-bridge', 'store', 'bridge.port')
+
+def get_bridge_port() -> int:
+    """Read the bridge port from the port file, default to 8080 if not found."""
+    try:
+        if os.path.exists(PORT_FILE_PATH):
+            with open(PORT_FILE_PATH, 'r') as f:
+                return int(f.read().strip())
+    except (ValueError, IOError):
+        pass
+    return 8080  # Default fallback
+
+WHATSAPP_API_BASE_URL = f"http://localhost:{get_bridge_port()}/api"
 
 @dataclass
 class Message:

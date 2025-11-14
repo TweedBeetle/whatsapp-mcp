@@ -24,6 +24,17 @@ from whatsapp import (
 # Track bridge process for cleanup
 _bridge_process = None
 
+def get_bridge_port() -> int:
+    """Read the bridge port from the port file, default to 8080 if not found."""
+    port_file_path = os.path.join(os.path.dirname(__file__), "..", "whatsapp-bridge", "store", "bridge.port")
+    try:
+        if os.path.exists(port_file_path):
+            with open(port_file_path, 'r') as f:
+                return int(f.read().strip())
+    except (ValueError, IOError):
+        pass
+    return 8080  # Default fallback
+
 def is_port_in_use(port: int) -> bool:
     """Check if a port is already in use."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -37,9 +48,12 @@ def start_bridge():
     """Start the WhatsApp bridge if not already running."""
     global _bridge_process
 
-    # Check if bridge is already running
-    if is_port_in_use(8080):
-        print("WhatsApp bridge already running on port 8080", file=sys.stderr)
+    # Try to read the bridge port if it exists
+    bridge_port = get_bridge_port()
+
+    # Check if bridge is already running on the expected port
+    if is_port_in_use(bridge_port):
+        print(f"WhatsApp bridge already running on port {bridge_port}", file=sys.stderr)
         return
 
     # Find the bridge binary
@@ -62,12 +76,17 @@ def start_bridge():
         )
         print(f"Started WhatsApp bridge (PID: {_bridge_process.pid})", file=sys.stderr)
 
-        # Wait a moment for bridge to start
+        # Wait a moment for bridge to start and determine its port
         time.sleep(2)
 
+        # Read the port the bridge actually selected
+        actual_port = get_bridge_port()
+
         # Verify it started
-        if not is_port_in_use(8080):
-            print("Warning: Bridge process started but port 8080 not in use", file=sys.stderr)
+        if not is_port_in_use(actual_port):
+            print(f"Warning: Bridge process started but port {actual_port} not in use", file=sys.stderr)
+        else:
+            print(f"Bridge is running on port {actual_port}", file=sys.stderr)
 
     except Exception as e:
         print(f"Failed to start bridge: {e}", file=sys.stderr)

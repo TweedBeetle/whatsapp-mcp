@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/binary"
@@ -8,19 +9,19 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/mdp/qrterminal"
-
-	"bytes"
 
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -786,6 +787,27 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 	}()
 }
 
+// findAvailablePort finds the first available port starting from startPort
+func findAvailablePort(startPort int) (int, error) {
+	for port := startPort; port < startPort+100; port++ {
+		addr := fmt.Sprintf(":%d", port)
+		listener, err := net.Listen("tcp", addr)
+		if err == nil {
+			// Port is available, close the test listener and return this port
+			listener.Close()
+			return port, nil
+		}
+		// Port is in use, try the next one
+	}
+	return 0, fmt.Errorf("no available port found in range %d-%d", startPort, startPort+100)
+}
+
+// savePortToFile saves the port number to a file for the MCP server to read
+func savePortToFile(port int, filePath string) error {
+	portStr := strconv.Itoa(port)
+	return os.WriteFile(filePath, []byte(portStr), 0644)
+}
+
 func main() {
 	// Set up logger
 	logger := waLog.Stdout("Client", "INFO", true)
@@ -905,8 +927,25 @@ func main() {
 
 	fmt.Println("\n✓ Connected to WhatsApp! Type 'help' for commands.")
 
+	// Find an available port starting from 8080
+	port, err := findAvailablePort(8080)
+	if err != nil {
+		logger.Errorf("Failed to find available port: %v", err)
+		return
+	}
+	fmt.Printf("Using port %d for REST API server\n", port)
+
+	// Save port to file for MCP server to read
+	portFilePath := filepath.Join("store", "bridge.port")
+	err = savePortToFile(port, portFilePath)
+	if err != nil {
+		logger.Errorf("Failed to save port to file: %v", err)
+		return
+	}
+	fmt.Printf("Port saved to %s\n", portFilePath)
+
 	// Start REST API server
-	startRESTServer(client, messageStore, 8080)
+	startRESTServer(client, messageStore, port)
 
 	// Create a channel to keep the main goroutine alive
 	exitChan := make(chan os.Signal, 1)
