@@ -391,28 +391,41 @@ def list_chats(
 
 
 def search_contacts(query: str) -> List[Contact]:
-    """Search contacts by name or phone number."""
+    """Search contacts by name or phone number.
+
+    Prioritizes contacts with saved names over phone-only contacts.
+    Matches against contact names and phone numbers (not JID domains).
+    """
     try:
         conn = sqlite3.connect(MESSAGES_DB_PATH)
         cursor = conn.cursor()
-        
-        # Split query into characters to support partial matching
-        search_pattern = '%' +query + '%'
-        
+
+        search_pattern = '%' + query + '%'
+
         cursor.execute("""
-            SELECT DISTINCT 
+            SELECT DISTINCT
                 jid,
-                name
+                name,
+                -- Check if this contact has a real name (not just their phone number)
+                CASE
+                    WHEN name != SUBSTR(jid, 1, INSTR(jid, '@') - 1) THEN 1
+                    ELSE 0
+                END as has_real_name
             FROM chats
-            WHERE 
-                (LOWER(name) LIKE LOWER(?) OR LOWER(jid) LIKE LOWER(?))
+            WHERE
+                -- Match on name OR phone number part of JID (before @)
+                (LOWER(name) LIKE LOWER(?)
+                 OR SUBSTR(jid, 1, INSTR(jid, '@') - 1) LIKE ?)
                 AND jid NOT LIKE '%@g.us'
-            ORDER BY name, jid
+            ORDER BY
+                has_real_name DESC,  -- Named contacts first
+                LOWER(name),         -- Then alphabetically by name
+                jid
             LIMIT 50
         """, (search_pattern, search_pattern))
-        
+
         contacts = cursor.fetchall()
-        
+
         result = []
         for contact_data in contacts:
             contact = Contact(
@@ -421,9 +434,9 @@ def search_contacts(query: str) -> List[Contact]:
                 jid=contact_data[0]
             )
             result.append(contact)
-            
+
         return result
-        
+
     except sqlite3.Error as e:
         print(f"Database error: {e}")
         return []
