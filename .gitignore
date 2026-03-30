@@ -8,6 +8,7 @@ whatsapp-bridge/store/
 # Compiled binaries
 whatsapp-bridge/main
 whatsapp-bridge/whatsapp-client
+whatsapp-bridge/whatsapp-bridge
 
 # Utility scripts
 whatsapp-bridge/update_chat_names.sh

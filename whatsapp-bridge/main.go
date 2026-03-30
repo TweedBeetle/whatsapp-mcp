@@ -893,6 +893,7 @@ func main() {
 			if evt.Event == "code" {
 				fmt.Println("\nScan this QR code with your WhatsApp app:")
 				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
+				os.WriteFile(filepath.Join("store", "qr_code.txt"), []byte(evt.Code), 0644)
 			} else if evt.Event == "success" {
 				connected <- true
 				break
@@ -1079,22 +1080,27 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 
 		// Process messages
 		messages := conversation.Messages
+
+		// Always store the chat, even if no messages were synced
 		if len(messages) > 0 {
 			// Update chat with latest message timestamp
 			latestMsg := messages[0]
 			if latestMsg == nil || latestMsg.Message == nil {
-				continue
-			}
-
-			// Get timestamp from message info
-			timestamp := time.Time{}
-			if ts := latestMsg.Message.GetMessageTimestamp(); ts != 0 {
-				timestamp = time.Unix(int64(ts), 0)
+				messageStore.StoreChat(chatJID, name, time.Now())
 			} else {
-				continue
+				timestamp := time.Time{}
+				if ts := latestMsg.Message.GetMessageTimestamp(); ts != 0 {
+					timestamp = time.Unix(int64(ts), 0)
+				} else {
+					timestamp = time.Now()
+				}
+				messageStore.StoreChat(chatJID, name, timestamp)
 			}
+		} else {
+			messageStore.StoreChat(chatJID, name, time.Now())
+		}
 
-			messageStore.StoreChat(chatJID, name, timestamp)
+		if len(messages) > 0 {
 
 			// Store messages
 			for _, msg := range messages {
