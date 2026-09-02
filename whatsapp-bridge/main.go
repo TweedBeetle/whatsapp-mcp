@@ -775,8 +775,13 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		})
 	})
 
-	// Start the server
-	serverAddr := fmt.Sprintf(":%d", port)
+	// Start the server.
+	// SECURITY (agent-security row 1, 2026-09-02): bind LOOPBACK ONLY. This API has no
+	// authentication and exposes /api/send and /api/download on a live WhatsApp identity;
+	// binding ":%d" put it on every interface, answering unauthenticated on the LAN and the
+	// tailnet. Every consumer (the MCP server, whatsapp_watch.py, the bridge-REST send path)
+	// runs on this Mac. Do not widen this without adding authentication first.
+	serverAddr := fmt.Sprintf("127.0.0.1:%d", port)
 	fmt.Printf("Starting REST API server on %s...\n", serverAddr)
 
 	// Run server in a goroutine so it doesn't block
@@ -790,7 +795,8 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 // findAvailablePort finds the first available port starting from startPort
 func findAvailablePort(startPort int) (int, error) {
 	for port := startPort; port < startPort+100; port++ {
-		addr := fmt.Sprintf(":%d", port)
+		// Probe on loopback, matching the address startRESTServer actually binds (see above).
+		addr := fmt.Sprintf("127.0.0.1:%d", port)
 		listener, err := net.Listen("tcp", addr)
 		if err == nil {
 			// Port is available, close the test listener and return this port
