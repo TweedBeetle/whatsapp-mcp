@@ -108,6 +108,18 @@ func (store *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time
 	return err
 }
 
+// TouchChat updates a chat's last_message_time, inserting the row with fallbackName only if the
+// chat is new. Unlike StoreChat it never overwrites an already-resolved contact name, which
+// matters for the outbound-recording seam: at send time all we have is the raw recipient string.
+func (store *MessageStore) TouchChat(jid, fallbackName string, lastMessageTime time.Time) error {
+	_, err := store.db.Exec(
+		`INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)
+		 ON CONFLICT(jid) DO UPDATE SET last_message_time = excluded.last_message_time`,
+		jid, fallbackName, lastMessageTime,
+	)
+	return err
+}
+
 // Store a message in the database
 func (store *MessageStore) StoreMessage(id, chatJID, sender, content string, timestamp time.Time, isFromMe bool,
 	mediaType, filename, url string, mediaKey, fileSHA256, fileEncSHA256 []byte, fileLength uint64) error {
@@ -204,7 +216,7 @@ type SendMessageRequest struct {
 }
 
 // Function to send a WhatsApp message
-func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message string, mediaPath string) (bool, string) {
+func sendWhatsAppMessage(client *whatsmeow.Client, messageStore *MessageStore, recipient string, message string, mediaPath string) (bool, string) {
 	if !client.IsConnected() {
 		return false, "Not connected to WhatsApp"
 	}
@@ -363,10 +375,39 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 	}
 
 	// Send message
-	_, err = client.SendMessage(context.Background(), recipientJID, msg)
+	sendResp, err := client.SendMessage(context.Background(), recipientJID, msg)
 
 	if err != nil {
 		return false, fmt.Sprintf("Error sending message: %v", err)
+	}
+
+	// Outbound-recording seam, ported from the business bridge (2026-10-02). A message sent
+	// through this REST path never comes back as an events.Message, so without this write it
+	// leaves no row in messages.db and `wa.py send` has nothing to verify the send against.
+	if messageStore != nil {
+		chatJID := recipientJID.String()
+		timestamp := sendResp.Timestamp
+		if timestamp.IsZero() {
+			timestamp = time.Now()
+		}
+		sender := ""
+		if client.Store.ID != nil {
+			sender = client.Store.ID.User
+		}
+		mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength := extractMediaInfo(msg)
+		if err := messageStore.TouchChat(chatJID, recipient, timestamp); err != nil {
+			fmt.Printf("Warning: failed to touch chat %s for outbound message: %v\n", chatJID, err)
+		}
+		if err := messageStore.StoreMessage(sendResp.ID, chatJID, sender, message, timestamp, true,
+			mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength); err != nil {
+			// The message IS delivered at this point: a storage failure must not report a failed
+			// send, but it must be loud.
+			fmt.Printf("Warning: message sent to %s but NOT recorded in messages.db (id %s): %v\n",
+				recipient, sendResp.ID, err)
+		} else {
+			fmt.Printf("[%s] \u2192 %s: %s (recorded, id %s)\n",
+				timestamp.Format("2006-01-02 15:04:05"), chatJID, message, sendResp.ID)
+		}
 	}
 
 	return true, fmt.Sprintf("Message sent to %s", recipient)
@@ -707,7 +748,7 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		fmt.Println("Received request to send message", req.Message, req.MediaPath)
 
 		// Send the message
-		success, message := sendWhatsAppMessage(client, req.Recipient, req.Message, req.MediaPath)
+		success, message := sendWhatsAppMessage(client, messageStore, req.Recipient, req.Message, req.MediaPath)
 		fmt.Println("Message sent", success, message)
 		// Set response headers
 		w.Header().Set("Content-Type", "application/json")
@@ -775,6 +816,28 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		})
 	})
 
+	// Handler for identity: which account this bridge is, and whether it is usable right now.
+	// wa.py reads it before every send so a send can never go out from the wrong number, which
+	// matters because this personal bridge and the business bridge run side by side on loopback.
+	http.HandleFunc("/api/whoami", func(w http.ResponseWriter, r *http.Request) {
+		jid, lid := "", ""
+		if client.Store.ID != nil {
+			jid = client.Store.ID.String()
+		}
+		if !client.Store.LID.IsEmpty() {
+			lid = client.Store.LID.String()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"bridge":    "personal",
+			"jid":       jid,
+			"lid":       lid,
+			"paired":    client.Store.ID != nil,
+			"connected": client.IsConnected(),
+			"logged_in": client.IsLoggedIn(),
+		})
+	})
+
 	// Start the server.
 	// SECURITY (agent-security row 1, 2026-09-02): bind LOOPBACK ONLY. This API has no
 	// authentication and exposes /api/send and /api/download on a live WhatsApp identity;
@@ -787,7 +850,10 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 	// Run server in a goroutine so it doesn't block
 	go func() {
 		if err := http.ListenAndServe(serverAddr, nil); err != nil {
+			// Exit rather than run on without an API: a bridge that is connected but unreachable
+			// reads as "down" to every consumer while looking alive to launchd.
 			fmt.Printf("REST API server error: %v\n", err)
+			os.Exit(1)
 		}
 	}()
 }
@@ -934,11 +1000,27 @@ func main() {
 
 	fmt.Println("\n✓ Connected to WhatsApp! Type 'help' for commands.")
 
-	// Find an available port starting from 8080
-	port, err := findAvailablePort(8080)
-	if err != nil {
-		logger.Errorf("Failed to find available port: %v", err)
-		return
+	// Port. WHATSAPP_BRIDGE_PORT pins it (the LaunchAgent sets 8091) and the bridge refuses to
+	// start if it is taken. Without the pin both this bridge and the business bridge race for the
+	// first free port from 8080, so whichever started first after a reboot would answer on the
+	// port the other's consumers send to, and a send could go out from the wrong number.
+	var port int
+	if pinned := os.Getenv("WHATSAPP_BRIDGE_PORT"); pinned != "" {
+		port, err = strconv.Atoi(pinned)
+		if err != nil {
+			logger.Errorf("WHATSAPP_BRIDGE_PORT is not a number: %q", pinned)
+			os.Exit(1)
+		}
+		if free, ferr := findAvailablePort(port); ferr != nil || free != port {
+			logger.Errorf("Pinned port %d is in use; refusing to start on another port", port)
+			os.Exit(1)
+		}
+	} else {
+		port, err = findAvailablePort(8080)
+		if err != nil {
+			logger.Errorf("Failed to find available port: %v", err)
+			return
+		}
 	}
 	fmt.Printf("Using port %d for REST API server\n", port)
 

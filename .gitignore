@@ -12,3 +12,5 @@ whatsapp-bridge/whatsapp-bridge
 
 # Utility scripts
 whatsapp-bridge/update_chat_names.sh
+# Pre-upgrade binary backups
+whatsapp-bridge/*.bak-*
