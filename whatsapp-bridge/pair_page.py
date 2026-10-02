@@ -9,11 +9,15 @@ time, so a one-off PNG is stale before anyone can scan it. This renders the curr
 an HTML page that reloads itself every 2 s, opens it once, and stops when whatsmeow_device has
 a row (paired) or after --timeout seconds.
 
+Pairing is on demand. An unpaired bridge stops after one unscanned batch of codes (clean exit,
+and its LaunchAgent only restarts it on a non-zero exit), so it is not asking WhatsApp for new
+codes every few minutes around the clock. This page starts it again whenever it is not running.
+
 Scan from the phone: WhatsApp -> Settings -> Linked devices -> Link a device.
 
     uv run pair_page.py [--timeout 900] [--no-open]
 """
-import argparse, html, re, sqlite3, subprocess, sys, time
+import argparse, html, os, re, sqlite3, subprocess, sys, time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -28,6 +32,18 @@ def paired() -> bool:
         return con.execute("SELECT count(*) FROM whatsmeow_device").fetchone()[0] > 0
     finally:
         con.close()
+
+
+LABEL = "com.whatsapp.bridge"
+
+
+def bridge_running() -> bool:
+    r = subprocess.run(["launchctl", "list", LABEL], capture_output=True, text=True)
+    return r.returncode == 0 and '"PID" =' in r.stdout
+
+
+def start_bridge() -> None:
+    subprocess.run(["launchctl", "kickstart", f"gui/{os.getuid()}/{LABEL}"], check=True)
 
 
 def write_page(body: str) -> None:
@@ -49,6 +65,8 @@ def main() -> int:
             write_page("<h1>Paired ✓</h1><p>The personal bridge is linked. You can close this tab.</p>")
             print("paired")
             return 0
+        if not bridge_running():
+            start_bridge()
         code = QR_TXT.read_text().strip() if QR_TXT.exists() else ""
         age = time.time() - QR_TXT.stat().st_mtime if QR_TXT.exists() else 1e9
         if code and code != last_code and age < 60:

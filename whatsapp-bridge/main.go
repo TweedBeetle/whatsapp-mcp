@@ -891,13 +891,13 @@ func main() {
 	// Create directory for database if it doesn't exist
 	if err := os.MkdirAll("store", 0755); err != nil {
 		logger.Errorf("Failed to create store directory: %v", err)
-		return
+		os.Exit(1) // non-zero so launchd restarts it
 	}
 
 	container, err := sqlstore.New(context.Background(), "sqlite3", "file:store/whatsapp.db?_foreign_keys=on", dbLog)
 	if err != nil {
 		logger.Errorf("Failed to connect to database: %v", err)
-		return
+		os.Exit(1) // non-zero so launchd restarts it
 	}
 
 	// Get device store - This contains session information
@@ -909,7 +909,7 @@ func main() {
 			logger.Infof("Created new device")
 		} else {
 			logger.Errorf("Failed to get device: %v", err)
-			return
+			os.Exit(1) // non-zero so launchd restarts it
 		}
 	}
 
@@ -917,14 +917,14 @@ func main() {
 	client := whatsmeow.NewClient(deviceStore, logger)
 	if client == nil {
 		logger.Errorf("Failed to create WhatsApp client")
-		return
+		os.Exit(1) // non-zero so launchd restarts it
 	}
 
 	// Initialize message store
 	messageStore, err := NewMessageStore()
 	if err != nil {
 		logger.Errorf("Failed to initialize message store: %v", err)
-		return
+		os.Exit(1) // non-zero so launchd restarts it
 	}
 	defer messageStore.Close()
 
@@ -957,7 +957,7 @@ func main() {
 		err = client.Connect()
 		if err != nil {
 			logger.Errorf("Failed to connect: %v", err)
-			return
+			os.Exit(1) // non-zero so launchd restarts it
 		}
 
 		// Print QR code for pairing with phone
@@ -979,15 +979,15 @@ func main() {
 		case <-connected:
 			fmt.Println("\nSuccessfully connected and authenticated!")
 		default:
-			logger.Errorf("Pairing codes exhausted without a scan; exiting for a fresh batch")
-			return
+			logger.Errorf("Pairing codes exhausted without a scan; stopping until pair_page.py asks again")
+			os.Exit(0) // clean exit: launchd (KeepAlive SuccessfulExit=false) leaves it stopped
 		}
 	} else {
 		// Already logged in, just connect
 		err = client.Connect()
 		if err != nil {
 			logger.Errorf("Failed to connect: %v", err)
-			return
+			os.Exit(1) // non-zero so launchd restarts it
 		}
 		connected <- true
 	}
@@ -997,7 +997,7 @@ func main() {
 
 	if !client.IsConnected() {
 		logger.Errorf("Failed to establish stable connection")
-		return
+		os.Exit(1) // non-zero so launchd restarts it
 	}
 
 	fmt.Println("\n✓ Connected to WhatsApp! Type 'help' for commands.")
@@ -1021,7 +1021,7 @@ func main() {
 		port, err = findAvailablePort(8080)
 		if err != nil {
 			logger.Errorf("Failed to find available port: %v", err)
-			return
+			os.Exit(1) // non-zero so launchd restarts it
 		}
 	}
 	fmt.Printf("Using port %d for REST API server\n", port)
@@ -1031,7 +1031,7 @@ func main() {
 	err = savePortToFile(port, portFilePath)
 	if err != nil {
 		logger.Errorf("Failed to save port to file: %v", err)
-		return
+		os.Exit(1) // non-zero so launchd restarts it
 	}
 	fmt.Printf("Port saved to %s\n", portFilePath)
 
