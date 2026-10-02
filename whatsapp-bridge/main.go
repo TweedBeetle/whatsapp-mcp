@@ -1033,8 +1033,18 @@ func GetChatName(client *whatsmeow.Client, messageStore *MessageStore, jid types
 		// This is an individual contact
 		logger.Infof("Getting name for contact: %s", chatJID)
 
+		// The contact store keeps a separate row per LID, and that row never carries the
+		// address-book FullName — only the self-set PushName. Resolve LID -> phone number
+		// first so the address book wins over whatever the contact calls themselves.
+		lookupJID := jid
+		if jid.Server == types.HiddenUserServer {
+			if pnJID, err := client.Store.LIDs.GetPNForLID(context.Background(), jid); err == nil && !pnJID.IsEmpty() {
+				lookupJID = pnJID
+			}
+		}
+
 		// Try to get contact info (check both full name and push name)
-		contact, err := client.Store.Contacts.GetContact(context.Background(), jid)
+		contact, err := client.Store.Contacts.GetContact(context.Background(), lookupJID)
 		if err == nil {
 			// Prefer FullName (from phone contacts), fallback to PushName (WhatsApp display name)
 			if contact.FullName != "" {
@@ -1044,14 +1054,31 @@ func GetChatName(client *whatsmeow.Client, messageStore *MessageStore, jid types
 			}
 		}
 
-		// If still no name, fallback to sender or JID
+		// Unmapped LID, or a phone-number row with nothing in it: fall back to the LID row.
+		if name == "" && lookupJID != jid {
+			if lidContact, err := client.Store.Contacts.GetContact(context.Background(), jid); err == nil {
+				if lidContact.FullName != "" {
+					name = lidContact.FullName
+				} else if lidContact.PushName != "" {
+					name = lidContact.PushName
+				}
+			}
+		}
+
+		// If still no name, fallback to sender or JID. Never name a chat after ourselves:
+		// sender is our own JID on outgoing messages, which would label the chat with our
+		// own number/LID instead of the person we're talking to.
 		if name == "" {
-			if sender != "" {
+			isOwnSender := sender != "" &&
+				((client.Store.ID != nil && sender == client.Store.ID.User) ||
+					(!client.Store.LID.IsEmpty() && sender == client.Store.LID.User))
+			if sender != "" && !isOwnSender {
 				// Fallback to sender
 				name = sender
 			} else {
-				// Last fallback to JID
-				name = jid.User
+				// Last fallback to JID — the phone number if we resolved one, since an
+				// opaque LID identifies nobody.
+				name = lookupJID.User
 			}
 		}
 
