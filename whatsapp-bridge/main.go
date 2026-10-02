@@ -972,12 +972,14 @@ func main() {
 			}
 		}
 
-		// Wait for connection
+		// The QR channel has closed: either a scan succeeded or WhatsApp stopped issuing codes.
+		// Exit at once when no scan came, so launchd restarts us into a fresh batch of codes
+		// instead of idling for minutes with no valid code on screen.
 		select {
 		case <-connected:
 			fmt.Println("\nSuccessfully connected and authenticated!")
-		case <-time.After(3 * time.Minute):
-			logger.Errorf("Timeout waiting for QR code scan")
+		default:
+			logger.Errorf("Pairing codes exhausted without a scan; exiting for a fresh batch")
 			return
 		}
 	} else {
