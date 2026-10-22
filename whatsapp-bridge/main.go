@@ -724,6 +724,11 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		// Shared secret (injection batch 2, bridge_secret.go): report-only unless WA_BRIDGE_SECRET_ENFORCE=1.
+		if !bridgeSecretAllow(r, "personal") {
+			http.Error(w, "Forbidden: missing or wrong X-WA-Bridge-Secret", http.StatusForbidden)
+			return
+		}
 
 		// Parse the request body
 		var req SendMessageRequest
