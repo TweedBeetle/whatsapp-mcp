@@ -22,6 +22,23 @@ def get_bridge_port() -> int:
 
 WHATSAPP_API_BASE_URL = f"http://localhost:{get_bridge_port()}/api"
 
+BRIDGE_SECRET_FILE = os.path.expanduser("~/.config/whatsapp-bridge/api-secret")
+
+
+def _read_headers() -> dict:
+    """The shared secret for a READ post (/download). The personal bridge refuses every POST without it under
+    WA_BRIDGE_SECRET_ENFORCE=1 (send-timing R6, 2026-10-29). Deliberately not sent on /send: a send from this
+    server would skip wa.py's checks (recipient, send timing), so wa.py stays the only send route that holds it."""
+    h = {"X-WA-Client": "whatsapp-mcp-server"}
+    try:
+        with open(BRIDGE_SECRET_FILE) as f:
+            secret = f.read().strip()
+        if secret:
+            h["X-WA-Bridge-Secret"] = secret
+    except OSError:
+        pass
+    return h
+
 @dataclass
 class Message:
     timestamp: datetime
@@ -766,7 +783,7 @@ def download_media(message_id: str, chat_jid: str) -> Optional[str]:
             "chat_jid": chat_jid
         }
         
-        response = requests.post(url, json=payload)
+        response = requests.post(url, json=payload, headers=_read_headers())
         
         if response.status_code == 200:
             result = response.json()

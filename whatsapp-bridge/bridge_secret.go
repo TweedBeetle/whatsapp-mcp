@@ -97,12 +97,12 @@ func bridgeSecretAllow(r *http.Request, line string) (allow bool) {
 	if enforce {
 		verdict = "refused"
 	}
-	fmt.Printf("[injection-b2 wa-bridge-secret] %s /api/send on the %s line: %s (remote %s, agent %q); %s\n",
-		verdict, line, status, r.RemoteAddr, r.UserAgent(),
+	fmt.Printf("[injection-b2 wa-bridge-secret] %s %s %s on the %s line: %s (remote %s, agent %q); %s\n",
+		verdict, r.Method, r.URL.Path, line, status, r.RemoteAddr, r.UserAgent(),
 		map[bool]string{true: "REFUSED", false: "served (report-only)"}[enforce])
 	bridgeSecretAppend("wa-bridge-secret.jsonl", map[string]interface{}{
 		"ts": now, "check": "wa-bridge-secret", "channel": "whatsapp-bridge", "line": line,
-		"tool": "POST /api/send", "rule": status, "verdict": verdict, "enforce": enforce,
+		"tool": r.Method + " " + r.URL.Path, "rule": status, "verdict": verdict, "enforce": enforce,
 		"remote": r.RemoteAddr, "user_agent": r.UserAgent(), "client": r.Header.Get("X-WA-Client"),
 	})
 	return !enforce

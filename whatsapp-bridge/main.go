@@ -852,7 +852,7 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 
 	// Run server in a goroutine so it doesn't block
 	go func() {
-		if err := http.ListenAndServe(serverAddr, nil); err != nil {
+		if err := http.ListenAndServe(serverAddr, bridgeSecretGuard(http.DefaultServeMux, "personal")); err != nil {
 			// Exit rather than run on without an API: a bridge that is connected but unreachable
 			// reads as "down" to every consumer while looking alive to launchd.
 			fmt.Printf("REST API server error: %v\n", err)
