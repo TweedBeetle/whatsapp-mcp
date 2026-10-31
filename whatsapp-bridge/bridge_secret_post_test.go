@@ -38,6 +38,7 @@ func guardServer(t *testing.T, enforce string) *httptest.Server {
 func call(t *testing.T, method, url, secret string) int {
 	t.Helper()
 	req, _ := http.NewRequest(method, url, strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
 	if secret != "" {
 		req.Header.Set("X-WA-Bridge-Secret", secret)
 	}

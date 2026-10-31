@@ -11,12 +11,21 @@ package main
 // client hint; never the message) and STILL SERVED. WA_BRIDGE_SECRET_ENFORCE=1 in the bridge's
 // environment makes it refuse with 403 instead; only security-lead sets that, after the replay.
 // WA_BRIDGE_SECRET_DISABLE=1 skips the check (logged once per process as KILL-SWITCH-ACTIVE).
-// Every failure of this code is an allow. The file is identical in both bridges.
+// The file is identical in both bridges.
+//
+// Fail closed under enforce (security-lead, 2026-10-31, prose-lint send-timing reverify-3 L4): the secret is the
+// browser-CSRF defence (neither bridge answers CORS and no handler checked Content-Type, so any page open in Chrome
+// could POST a text/plain body holding JSON to /api/send with no preflight). Under WA_BRIDGE_SECRET_ENFORCE=1:
+// (a) a secret file that is missing, empty or unreadable refuses every guarded request (`no-secret-configured
+// refused`), where it used to serve everything; (b) a panic in this check refuses (report-only still allows);
+// (c) a POST whose Content-Type is not application/json is refused (`not-json`), which forces a browser preflight.
+// WA_BRIDGE_SECRET_DISABLE stays the one logged allow path.
 
 import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -51,13 +60,21 @@ func bridgeSecretAppend(name string, row map[string]interface{}) {
 	f.Write(append(b, '\n'))
 }
 
+// bridgeSecretJSON reports whether a request declares a JSON body (application/json, any parameters).
+func bridgeSecretJSON(r *http.Request) bool {
+	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	return err == nil && mt == "application/json"
+}
+
 // bridgeSecretAllow reports whether the request may be served. It returns false only under
-// WA_BRIDGE_SECRET_ENFORCE=1 with a configured secret and a missing or wrong header.
+// WA_BRIDGE_SECRET_ENFORCE=1: no usable secret configured, a missing or wrong header, a POST that is not JSON,
+// or a failure of this check itself.
 func bridgeSecretAllow(r *http.Request, line string) (allow bool) {
+	enforceEnv := os.Getenv("WA_BRIDGE_SECRET_ENFORCE") == "1"
 	allow = true
 	defer func() {
 		if recover() != nil {
-			allow = true
+			allow = !enforceEnv
 		}
 	}()
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
@@ -88,11 +105,13 @@ func bridgeSecretAllow(r *http.Request, line string) (allow bool) {
 		status = "missing-header"
 	case subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1:
 		status = "bad-header"
+	case r.Method == http.MethodPost && !bridgeSecretJSON(r):
+		status = "not-json"
 	}
 	if status == "ok" {
 		return true
 	}
-	enforce := os.Getenv("WA_BRIDGE_SECRET_ENFORCE") == "1" && want != ""
+	enforce := enforceEnv
 	verdict := "would-refuse"
 	if enforce {
 		verdict = "refused"
